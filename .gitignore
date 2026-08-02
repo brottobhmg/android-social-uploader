@@ -1,0 +1,65 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Debug artifacts
+debug_agent_clicks/
+*.png
+*.jpg
+*.jpeg
+
+# Output directories
+output/
+downloads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution / Packaging
+dist/
+build/
+*.egg-info/
+
+# Temporary files
+*.tmp
+*.temp
+scratch/
+
+# Internal planning / design docs (not for public release)
+docs/superpowers/
+
+# Auto-generated upload guides (artifacts of job runs)
+docs/guida_caricamento_*.md
+
+# Local test runs and device dumps
+task1/
+task1_autolaunch/
+*.xml
+window_dump.xml
