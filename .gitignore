@@ -54,6 +54,7 @@ scratch/
 
 # Internal planning / design docs (not for public release)
 docs/superpowers/
+.superpowers/
 
 # Auto-generated upload guides (artifacts of job runs)
 docs/guida_caricamento_*.md
