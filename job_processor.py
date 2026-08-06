@@ -63,10 +63,33 @@ def _push_to_device(local_video: str, local_json: str, job_id: int) -> Dict[str,
     config.debug_print(f"Pushing JSON to Android: {phone_json}")
     uia.adb(f"push {local_json} {phone_json}")
 
-    # Force MediaStore scan so the gallery sees the file immediately
+    # TikTok's internal gallery reads ONLY from MediaStore and typically only
+    # shows media in standard folders (camera roll, etc.), unlike Instagram and
+    # YouTube which use the system picker (Storage Access Framework) that can
+    # browse the real filesystem. So we:
+    #   1. copy the video into the camera roll (DCIM/Camera) so TikTok shows it,
+    #   2. insert it directly into the MediaStore database via `content insert`
+    #      (the most reliable method; `cmd media_scanner scan` and the legacy
+    #      MEDIA_SCANNER_SCAN_FILE broadcast are unreliable/ignored on Android 10+).
+    camera_dir = "/storage/emulated/0/DCIM/Camera"
+    camera_video = f"{camera_dir}/video_{job_id}.mp4"
+    uia.adb(f"shell mkdir -p {camera_dir}")
+    uia.adb(f"shell cp {phone_video} {camera_video}")
+
     config.debug_print("Forcing MediaStore database scan...")
+    # Direct MediaStore insert (most reliable across versions). The shell user
+    # can set _data directly, which forces the entry into the media database.
+    # This is what makes the file appear in TikTok's internal gallery.
     uia.adb(
-        f"shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://{phone_video}"
+        "shell content insert --uri content://media/external/video/media "
+        f"--bind _data:s:{camera_video} "
+        f"--bind _display_name:s:video_{job_id}.mp4 "
+        "--bind mime_type:s:video/mp4"
+    )
+    time.sleep(2)
+    # Fallback for Android 10 and older, where `content insert` may be restricted.
+    uia.adb(
+        f"shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://{camera_video}"
     )
     time.sleep(2)
     return {"video": phone_video, "json": phone_json}

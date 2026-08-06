@@ -38,7 +38,7 @@ class YouTubeUploader(BaseUploader):
         time.sleep(5)
 
         # Click on title field to focus
-        uia.agent_click(55.6, 18, "field for entering 'Describe your Short'")
+        uia.agent_click(55.6, 18, "the TITLE text field at the top of the form, the one whose hint text is 'Describe your Short' or 'Add a title'. This is the FIRST field, ABOVE the description field. Do NOT click the description field.")
         time.sleep(3)
 
         # Insert title text
@@ -63,7 +63,7 @@ class YouTubeUploader(BaseUploader):
         time.sleep(2)
 
         # Click "add description": 422 1240
-        uia.agent_click(39.07, 51.66, "'Add description' item")
+        uia.agent_click(39.07, 51.66, "the DESCRIPTION text field, the one whose hint text is 'Add a description' or 'Describe your video'. This is BELOW the title field. Do NOT click the title field.")
         time.sleep(1)
         desc = metadata.get("descrizione_post", "Shorts Description")
         config.logger.info("Typing description: %s", desc)
