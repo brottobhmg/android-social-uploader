@@ -385,6 +385,11 @@ def agent_click(x_prop, y_prop, description, max_attempts=10):
             "  - Swipe/Scroll: {\"status\": \"action\", \"action\": \"swipe\", \"params\": {\"start_x\": int, \"start_y\": int, \"end_x\": int, \"end_y\": int}, \"rationale\": string}\n"
             "  - Press key: {\"status\": \"action\", \"action\": \"press_key\", \"params\": {\"key\": \"BACK\" | \"HOME\" | \"ENTER\"}, \"rationale\": string}\n"
             "  - Wait: {\"status\": \"action\", \"action\": \"wait\", \"params\": {\"seconds\": int}, \"rationale\": string}\n\n"
+            "CRITICAL RULES FOR TEXT FIELDS:\n"
+            "  - When the goal is a text input field, you MUST click the EXACT field described, matching its hint/label text (e.g. 'Title', 'Describe your Short', 'Add a description', 'Tags').\n"
+            "  - Do NOT confuse the title field with the description field, or vice versa. They are different fields with different hint text and different positions.\n"
+            "  - If the hint text of the field you are about to click does NOT match the goal description, do NOT click it. Instead use a corrective action (click the correct field, or scroll) to reach the right one.\n"
+            "  - Prefer clicking directly on the visible hint text of the target field, not on empty space nearby.\n\n"
             "You will be given the history of actions taken so far in this loop. Avoid repeating failing actions.\n"
             "You must return ONLY a valid JSON object matching the schemas above, and nothing else."
         )
