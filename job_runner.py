@@ -29,20 +29,15 @@ import config
 
 
 def scan_device(select=None):
-    """List attached ADB devices, or select one when ``select`` is provided."""
-    proc = subprocess.Popen("adb devices", stdout=subprocess.PIPE, shell=False)
-    out, _ = proc.communicate()
-    devices = out.decode("utf-8").split("\n")[1:]
-    all_attached_devices: list[str] = []
-    for device in devices:
-        device = device.split("\t")[0].strip()
-        if select is not None:
-            uia.set_device_id(device)
-            config.debug_print(f"selected Device ID: {uia.get_device_id()}")
-            return
-        if device != "":
-            all_attached_devices.append(device)
-    return all_attached_devices
+    """List attached ADB devices, or select the ``select``-th one (1-based)."""
+    out = subprocess.check_output(["adb", "devices"]).decode("utf-8")
+    devices = [
+        line.split("\t")[0].strip() for line in out.splitlines()[1:] if line.strip()
+    ]
+    if select is not None:
+        uia.set_device_id(devices[select - 1])
+        config.debug_print(f"selected Device ID: {uia.get_device_id()}")
+    return devices
 
 
 def poll_for_jobs() -> None:
@@ -54,6 +49,10 @@ def poll_for_jobs() -> None:
         try:
             response = requests_get_next_job()
             if response is None:
+                # Empty queue or error: back off before polling again, or we
+                # hammer /api/next-job in a tight loop and trip the 60 req/min
+                # per-IP rate limit (which punishes the dashboard too).
+                time.sleep(config.POLL_INTERVAL)
                 continue
             job_id, source_link = response
             config.debug_print(f"🔔 Found pending job {job_id} for {source_link}")
@@ -75,9 +74,20 @@ def requests_get_next_job():
     """Fetch the next pending job from the backend API."""
     import requests
 
-    response = requests.get(f"{config.API_URL}/api/next-job", timeout=10)
+    if not config.API_URL:
+        config.logger.error(
+            "API_URL is not configured: add it to your .env file before polling"
+        )
+        return None
+
+    # (connect, read) timeout: 3s to establish TCP+TLS, 15s to get a response.
+    response = requests.get(f"{config.API_URL}/api/next-job", timeout=(3.05, 15))
     if response.status_code != 200:
-        config.debug_print(f"The server API responded with code {response.status_code}")
+        body = response.text.strip()[:200]
+        config.logger.warning(
+            f"Server answered HTTP {response.status_code} on /api/next-job"
+            + (f": {body}" if body else "")
+        )
         return None
     data = response.json()
     if data.get("status") == "no_jobs":
@@ -85,11 +95,30 @@ def requests_get_next_job():
     return data["id"], data["source_link"]
 
 
-def requests_post_job_status(job_id: int, status: str) -> None:
-    """Notify the backend API about a job's completion status."""
+def requests_post_job_status(job_id: int, status: str, attempts: int = 3) -> None:
+    """Notify the backend API about a job's completion status, with retries.
+
+    A job left in ``processing`` after a failed report is invisible to the
+    queue forever, so retry a few times before giving up. HTTP 404 means the
+    job was deleted from the dashboard: stop working on it.
+    """
     import requests
 
-    requests.post(f"{config.API_URL}/api/job-{status}/{job_id}", timeout=10)
+    url = f"{config.API_URL}/api/job-{status}/{job_id}"
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.post(url, timeout=(3.05, 15))
+            if response.status_code in (200, 404):
+                return
+            config.logger.warning(
+                f"Report for job {job_id} answered HTTP {response.status_code}"
+            )
+        except Exception as e:
+            config.logger.warning(f"Report for job {job_id} failed: {e}")
+        time.sleep(5)
+    config.logger.error(
+        f"Could not report job {job_id} as {status}: it may stay in 'processing'"
+    )
 
 
 def main() -> None:
@@ -124,7 +153,9 @@ if __name__ == "__main__":
     if args.debug:
         config.set_debug(True)
 
-    if args.job_id:
+    # NOTE: check `is not None` — a job id of 0 is a valid value and is falsy
+    # in Python, so `if args.job_id:` would wrongly fall into polling mode.
+    if args.job_id is not None:
         process_job(args.job_id)
     else:
         main()

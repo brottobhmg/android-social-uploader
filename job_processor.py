@@ -138,6 +138,10 @@ def process_job(job_id: int) -> bool:
             TikTokUploader(),
             YouTubeUploader(),
         ]
+        # ponytail: "completed" here means no exception was raised, not that the
+        # post is live (upload() returns True unconditionally and the return
+        # value is ignored). Add a published-post check if false positives
+        # show up in the dashboard.
         for uploader in uploaders:
             uploader.upload(phone_paths["video"], metadata)
             time.sleep(20)
