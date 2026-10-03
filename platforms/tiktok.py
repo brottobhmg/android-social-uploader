@@ -26,9 +26,9 @@ class TikTokUploader(BaseUploader):
         time.sleep(10)
 
         # Sequence of touches to start the upload (coordinates in 0-100 scale)
-        uia.agent_click(95, 95, "profile button at the bottom right")
+        uia.agent_click(92.59, 97.92, "profile button at the bottom right")
         time.sleep(2)
-        uia.agent_click(50, 95, "+ button to create a new post, in the center of the bottom nav bar")
+        uia.agent_click(49.81, 97.13, "+ button to create a new post, in the center of the bottom nav bar")
         time.sleep(2)
         uia.agent_click(9.26, 95.83, "button at the bottom left to browse local files")
         time.sleep(1)

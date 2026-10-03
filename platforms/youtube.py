@@ -53,14 +53,14 @@ class YouTubeUploader(BaseUploader):
         uia.hide_keyboard()
         time.sleep(2)
 
+        # Click "show more": 490 1370 (-> 45.37, 57.08)
+        uia.agent_click(45.37, 57.08, "'Show more' item — click to EXPAND the details section, NOT to collapse it. It must show the additional fields below.")
+        time.sleep(2)
+
         # Scroll up to show the following options
-        uia.touch_relative(50, 60)
         uia.adb("shell input swipe 540 1600 540 600 500")
         time.sleep(1)
 
-        # Click "show more": 585 1256 (-> 54.2, 52.3)
-        uia.agent_click(54.2, 52.3, "'Show more' or 'Show less' item — click to EXPAND the details section, NOT to collapse it. It must show the additional fields below.")
-        time.sleep(2)
 
         # Click "add description": 422 1240
         uia.agent_click(39.07, 51.66, "the DESCRIPTION text field, the one whose hint text is 'Add a description' or 'Describe your video'. This is BELOW the title field. Do NOT click the title field.")
@@ -78,8 +78,8 @@ class YouTubeUploader(BaseUploader):
         step_recorder.record_back("Return to the details screen after the description")
         time.sleep(2)
 
-        # Click menu with tags: 480 2185 (-> 44.4, 91.0)
-        uia.agent_click(44.4, 91.0, "'AI usage, Category, Tags and ' item, the last visible element containing that title")
+        # Click menu with tags: 480 1735 (-> 44.4, 72.29)
+        uia.agent_click(44.4, 72.29, "'AI usage, Category, Tags and ' item, the last visible element containing that title")
         time.sleep(2)
 
         # Click on tag field: 468 629 (-> 43.3, 26.2)

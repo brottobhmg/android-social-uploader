@@ -78,7 +78,7 @@ def init_agent_llm():
 
     if google_key:
         _LLM_PROVIDER_INSTANCE = GoogleGenAIProvider(
-            api_key=google_key, model_name="gemini-3.1-flash-lite"
+            api_key=google_key, model_name="gemini-3.5-flash-lite"
         )
         config.debug_print("Initialized Google Gemini Vision Provider.")
     elif nim_key:
