@@ -102,7 +102,17 @@ class ADBController:
             return ""
 
     def wake_and_unlock(self):
-        """Force-wake the screen and unlock the device."""
+        """Force-wake the screen and unlock the device.
+
+        KEYCODE_MENU (82) is sent *only* when the keyguard is genuinely up.
+
+        It used to be sent unconditionally on every call, i.e. before every
+        single agent_click. That is harmful: on the Android Photo Picker --
+        the screen YouTube Studio uses to pick the uploaded video -- MENU
+        leaves the grid in a state where tapping a thumbnail does not select
+        it, so the upload step silently did nothing. Verified on device:
+        tap -> "Aggiungi dettagli" with MENU = FAIL, without MENU = OK.
+        """
         try:
             power_state = subprocess.check_output(self._adb_cmd(["shell", "dumpsys", "power"])).decode("utf-8")
             is_interactive = "mIsInteractive: true" in power_state or "mIsInteractive=true" in power_state
@@ -111,10 +121,15 @@ class ADBController:
                 config.debug_print("Screen off or not interactive. Sending hardware power trigger...")
                 subprocess.run(self._adb_cmd(["shell", "input", "keyevent", "26"]), check=True)  # KEYCODE_POWER
                 time.sleep(1)
-            
-            # Unlock the device (send KEYCODE_MENU / 82)
-            subprocess.run(self._adb_cmd(["shell", "input", "keyevent", "82"]), check=True)  # KEYCODE_MENU
-            time.sleep(0.5)
-            config.debug_print("Device woken up and unlocked.")
+
+            window_state = subprocess.check_output(self._adb_cmd(["shell", "dumpsys", "window"])).decode("utf-8", errors="ignore")
+            keyguard_up = "isKeyguardShowing=true" in window_state
+
+            if keyguard_up:
+                config.debug_print("Keyguard is up. Dismissing it...")
+                subprocess.run(self._adb_cmd(["shell", "input", "keyevent", "82"]), check=True)  # KEYCODE_MENU
+                time.sleep(0.5)
+            else:
+                config.debug_print("Device already awake and unlocked.")
         except Exception as e:
             config.debug_print(f"Error during wake_and_unlock: {e}")
