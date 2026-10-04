@@ -25,8 +25,10 @@ from llm_provider import GoogleGenAIProvider, OpenAICompatibleProvider
 from step_recorder import step_recorder
 import config
 
-# Persistent history across agent_click calls (used to avoid repeating
-# corrective actions that already failed in the current click loop).
+# Corrective actions the agent has taken, kept across the steps of a single
+# platform flow so it does not repeat a trick that just failed (e.g. BACK on a
+# screen that needs a swipe). Reset by :func:`reset_agent_history` when the
+# platform changes -- see BaseUploader.start_app().
 AGENT_HISTORY: list[str] = []
 
 # Single ADB controller instance shared across the codebase. Its device_id is
@@ -338,6 +340,17 @@ def hide_keyboard():
 # ---------------------------------------------------------------------------
 # Vision-based agent click
 # ---------------------------------------------------------------------------
+
+def reset_agent_history() -> None:
+    """Forget the corrective actions taken so far.
+
+    Called when the platform changes, not between steps: within one platform
+    the history is useful (it stops the agent from re-issuing a corrective
+    action that already failed), while across platforms it would push the agent
+    into actions that make no sense on the new app.
+    """
+    AGENT_HISTORY.clear()
+
 
 def agent_click(x_prop, y_prop, description, max_attempts=10):
     """Find an element described near specific coordinates and click it.
