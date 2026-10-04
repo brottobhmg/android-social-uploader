@@ -56,6 +56,10 @@ scratch/
 docs/superpowers/
 .superpowers/
 
+# Agent tool local state (contains full copies of the project)
+.kilo/
+.kilocode/
+
 # Auto-generated upload guides (artifacts of job runs)
 docs/guida_caricamento_*.md
 
