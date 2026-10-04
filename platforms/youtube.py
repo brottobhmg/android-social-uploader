@@ -32,8 +32,10 @@ class YouTubeUploader(BaseUploader):
         uia.agent_click(68.6, 6.9, "plus (+) button at the top to create")
         time.sleep(3)
 
-        # 2. Select video: 178 1666 (-> 16.5, 69.4)
-        uia.touch_relative(18.5, 34.4)  # 200 825
+        # 2. Select the video in the picker. This used to be a blind
+        # touch_relative() tap: no screenshot, no vision check, and a wrong
+        # hit would publish someone else's video without a single warning.
+        uia.agent_click(18.5, 34.4, "the video thumbnail to upload in the media picker: the tile of the video file that was just added to the device, near the top-left of the grid")
         time.sleep(5)
 
         # Click on title field to focus
