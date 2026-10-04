@@ -23,7 +23,6 @@ class YouTubeUploader(BaseUploader):
     def upload(self, video_path: str, metadata: Dict[str, Any]) -> bool:
         config.debug_print("🚀 Starting YouTube Studio...")
         self.start_app()
-        time.sleep(10)
 
         # 0. Tap bottom nav bar: 130 2333
         uia.agent_click(12, 97.2, "'dashboard' button in the bottom left bar")

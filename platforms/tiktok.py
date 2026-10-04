@@ -23,7 +23,6 @@ class TikTokUploader(BaseUploader):
     def upload(self, video_path: str, metadata: Dict[str, Any]) -> bool:
         config.debug_print("🚀 Starting TikTok...")
         self.start_app()
-        time.sleep(10)
 
         # Sequence of touches to start the upload (coordinates in 0-100 scale)
         uia.agent_click(92.59, 97.92, "profile button at the bottom right")

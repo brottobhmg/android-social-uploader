@@ -23,7 +23,6 @@ class InstagramUploader(BaseUploader):
     def upload(self, video_path: str, metadata: Dict[str, Any]) -> bool:
         config.debug_print("🚀 Starting Instagram...")
         self.start_app()
-        time.sleep(10)
 
         # 1. Tap profile button bottom-right (967, 2266 -> 89.5, 94.4)
         uia.agent_click(89.5, 94.4, "profile button at the bottom right to go to the profile")

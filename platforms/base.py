@@ -9,6 +9,7 @@ metadata (description, tags, title) for the post.
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
@@ -28,6 +29,11 @@ class BaseUploader(ABC):
     #: Activity to launch when starting the app.
     launch_activity: str = ""
 
+    #: Seconds to wait after (re)starting the app before the first click.
+    #: Generous on purpose: a force-stopped app is a *cold* start, which is
+    #: noticeably slower than resuming an existing task.
+    startup_wait = 15
+
     def __init__(self) -> None:
         self._started = False
 
@@ -36,11 +42,21 @@ class BaseUploader(ABC):
     # ------------------------------------------------------------------
 
     def start_app(self) -> None:
-        """Launch the platform app on the device and record the step."""
+        """Force-stop the platform app, relaunch it, and record the step.
+
+        ``-S`` is not optional. Without it ``am start`` just brings the
+        existing task to the front ("Activity not started, its current task
+        has been brought to the front"), so an upload inherits whatever screen
+        the previous run left behind -- typically a draft/edit form, which the
+        vision agent then has to escape (and may answer by discarding the
+        draft).
+        """
         step_recorder.start_platform(self.platform_name, self.app_package)
-        uia.adb(
-            f"shell am start -n {self.app_package}/{self.launch_activity}"
-        )
+        # New app, new context: the agent's corrective actions from the
+        # previous platform are meaningless here.
+        uia.reset_agent_history()
+        uia.adb(f"shell am start -S -n {self.app_package}/{self.launch_activity}")
+        time.sleep(self.startup_wait)
         self._started = True
 
     # ------------------------------------------------------------------
