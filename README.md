@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-9%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-10%20passing-brightgreen.svg)](tests/)
 
 An automated **Android UI automation framework** that uploads videos to social
 platforms (TikTok, Instagram, YouTube Studio) powered by **vision-based LLMs**.
