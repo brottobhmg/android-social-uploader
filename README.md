@@ -165,6 +165,9 @@ DEVICE_ID=
 # Optional: backend API URL for job polling (job_runner.py only)
 API_URL=http://your-vps-address:port
 
+# Optional: bearer token for the backend job routes (job_runner.py only)
+API_TOKEN=your_api_token_here
+
 # Optional: enable debug mode (verbose logging + annotated screenshots)
 DEBUG=false
 
@@ -182,6 +185,31 @@ MAX_AGENT_ATTEMPTS=10
 > variables via `config.py`. The `.env` file is gitignored and never committed.
 > A dependency-free secret scanner and a pre-commit hook block accidental
 > credential commits — see [docs/SECURITY.md](docs/SECURITY.md).
+
+### Backend authentication
+
+Every route of the job API (`/api/next-job`, `/api/download/{id}/video`,
+`/api/download/{id}/json`, `/api/job-completed/{id}`, `/api/job-failed/{id}`)
+requires the bearer token, which the client sends as
+`Authorization: Bearer <API_TOKEN>` on each request, including the streaming
+video download. The token is shared with the backend and read from `.env` like
+every other credential.
+
+The HTML dashboard is protected by HTTP-Basic instead, and this client never
+talks to it.
+
+The client reacts to the backend answers as follows:
+
+| Status | Meaning | Client behaviour |
+|--------|---------|------------------|
+| `401` | token missing or wrong | Configuration error: logged, **not retried**; the polling loop waits `AUTH_ERROR_BACKOFF` (default 300 s) before trying again |
+| `503` | the server has no token configured | Same as `401` |
+| `429` | rate limit reached | Backs off `RATE_LIMIT_BACKOFF` (default 60 s), as the backend documentation requires |
+| `400` on `POST /api/media` | a path is outside the server output directory | Logged with the details, not retried — it is a client bug |
+| `404` on download | the file is gone from the server | The job is reported as failed and the loop moves on |
+
+A wrong token is therefore reported once, clearly, and never turns into a
+stream of identical requests.
 
 ## 🎮 Usage
 
