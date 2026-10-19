@@ -81,6 +81,29 @@ class BaseUploader(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _valid_tags(raw: str) -> list:
+        """Return the usable tags of a metadata ``tag`` field.
+
+        YouTube Studio rejects the whole batch when one tag is not
+        acceptable, and the rules are strict: a tag must be longer than one
+        character and must not repeat. A single bad entry used to make the
+        upload fail with a truncated list of tags, so the invalid ones are
+        dropped here instead.
+        """
+        seen = set()
+        valid = []
+        for tag in (raw or "").replace(" ", ",").split(","):
+            tag = tag.strip().lstrip("#")
+            if len(tag) < 2:
+                continue
+            lowered = tag.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            valid.append(tag)
+        return valid
+
+    @staticmethod
     def _build_description(metadata: Dict[str, Any], default: str = "Description") -> str:
         """Build the post description from metadata, appending unique hashtags."""
         desc = metadata.get("descrizione_post", default)

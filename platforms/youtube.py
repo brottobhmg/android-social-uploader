@@ -4,6 +4,7 @@ platforms.youtube — YouTube Studio upload automation.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Dict
 
@@ -43,11 +44,11 @@ class YouTubeUploader(BaseUploader):
         time.sleep(3)
 
         # Insert title text
-        desc = metadata.get("titolo", "")
-        config.logger.info("Typing title: %s", desc)
+        title = metadata.get("titolo", "")
+        config.logger.info("Typing title: %s", title)
         uia.clear_focused_field()
-        uia.type_text(desc)
-        step_recorder.record_type("Short title field", desc)
+        uia.type_text(title)
+        step_recorder.record_type("Short title field", title)
         time.sleep(2)
 
         # Hide keyboard
@@ -83,33 +84,63 @@ class YouTubeUploader(BaseUploader):
         uia.agent_click(44.4, 72.29, "'AI usage, Category, Tags and ' item, the last visible element containing that title")
         time.sleep(2)
 
-        # The AI usage disclosure and the category are REQUIRED by YouTube
-        # Studio: while they are unanswered the publish button stays
-        # disabled, so the upload silently never happens.
+        # The AI usage disclosure is REQUIRED by YouTube Studio: while it is
+        # unanswered the publish button stays disabled, so the upload
+        # silently never happens. The category is not set: YouTube Studio
+        # assigns one on its own.
         self._answer_ai_disclosure()
-        self._select_category()
 
-        # Click on tag field: 468 629 (-> 43.3, 26.2)
-        uia.agent_click(43.3, 26.2, "text field to enter tags")
+        # The tags live behind the "Aggiungi tag" entry of the attributes
+        # screen. Clicking the inline chip area instead types the tags into
+        # the title field, which then gets published with the tags stuck to
+        # it.
+        tags = self._valid_tags(metadata.get("tag", ""))
+        config.logger.info("Typing %d tags: %s", len(tags), ", ".join(tags))
+        if not uia.agent_click(
+            54.5, 25.3, "the 'Aggiungi tag' entry that opens the tag editor"
+        ):
+            config.logger.error("YouTube: could not open the tag editor")
+            return False
         time.sleep(2)
         uia.clear_focused_field()
-
-        # Insert tags as-is, separated by spaces, without hashtags or commas
-        tags = metadata.get("tag", "")
-        config.logger.info("Typing tags: %s", tags)
-        uia.type_text(tags + ",")
-        step_recorder.record_type("Short tags field", tags)
+        uia.type_text(", ".join(tags))
+        step_recorder.record_type("Short tags field", ", ".join(tags))
         time.sleep(2)
 
         # Hide keyboard
         uia.hide_keyboard()
         time.sleep(2)
 
+        # The tags are committed with a comma: without it the last tag stays
+        # in the field as plain text instead of becoming a chip.
+        uia.adb(["shell", "input", "text", ","])
+        time.sleep(1)
+        uia.hide_keyboard()
+        time.sleep(2)
+
+        # Verify that the tags really became chips.
+        missing = self._tags_missing(tags)
+        if missing:
+            config.logger.error(
+                "YouTube: %d tag(s) were not accepted: %s",
+                len(missing),
+                ", ".join(missing),
+            )
+
         # Simulate back key
         config.logger.info("Simulating Back button...")
         uia.adb(["shell", "input", "keyevent", "4"])
         step_recorder.record_back("Confirm and return to the main publication screen")
         time.sleep(2)
+
+        # The title must be exactly what the metadata says: a mistargeted
+        # click can leave the tags stuck to it.
+        if not self._title_is_intact(title):
+            config.logger.error(
+                "YouTube: the title field does not hold the expected text "
+                "('%s'): refusing to publish a corrupted title.", title
+            )
+            return False
 
         # Click "upload short": 543 2302 (-> 50.3, 95.9)
         if not uia.agent_click(50.3, 95.9, "Upload Short or Upload video button at the bottom"):
@@ -167,25 +198,25 @@ class YouTubeUploader(BaseUploader):
         time.sleep(2)
         return ok
 
-    def _select_category(self) -> bool:
-        """Pick a category. YouTube Studio requires one for every upload."""
-        if not uia.agent_click(
-            94.0, 19.0, "the '+' button next to 'Seleziona categoria' in the attributes screen"
-        ):
-            config.logger.warning("YouTube: could not open the category picker")
-            return False
-        time.sleep(2)
+    def _tags_missing(self, tags: list) -> list:
+        """Return the tags that did not become a chip on the screen."""
+        tree = uia.dump_ui_tree()
+        if not tree:
+            return []
+        present = {chip.lower() for chip in re.findall(r"#(\w+)", tree)}
+        return [tag for tag in tags if tag.lower() not in present]
 
-        ok = uia.agent_click(
-            6.0, 50.0, f"the '{config.YOUTUBE_CATEGORY}' radio button in the category list"
-        )
-        time.sleep(1)
-        if ok:
-            step_recorder.record_type("YouTube category", config.YOUTUBE_CATEGORY)
-        # Close the picker.
-        uia.adb(["shell", "input", "keyevent", "4"])
-        time.sleep(2)
-        return ok
+    def _title_is_intact(self, expected: str) -> bool:
+        """Return True when the title field still holds the expected text.
+
+        The tag editor sits close to the title field: a mistargeted click
+        types the tags into the title, and the Short is then published with
+        the tags stuck to its title.
+        """
+        tree = uia.dump_ui_tree()
+        if not tree:
+            return True
+        return expected in tree
 
     def _publication_left_the_form(self) -> bool:
         """Return True when the details screen is no longer on display."""

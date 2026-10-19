@@ -221,10 +221,10 @@ missing. A platform uploader that cannot click its publish button returns a
 failure, and a job with a failed platform is reported as `failed` instead of
 `completed`.
 
-YouTube Studio additionally requires two fields before the publish button
-becomes available: the **AI usage disclosure** and a **category**. Both are
-filled by the uploader and can be configured with `AI_DISCLOSURE` and
-`YOUTUBE_CATEGORY`.
+YouTube Studio additionally requires the **AI usage disclosure** before the
+publish button becomes available. The uploader answers it and the answer is
+configurable with `AI_DISCLOSURE` (`No` by default). The category is not set:
+YouTube Studio assigns one on its own.
 
 ## 🎮 Usage
 

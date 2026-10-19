@@ -131,8 +131,6 @@ LOCAL_DOWNLOAD_DIR = os.getenv("LOCAL_DOWNLOAD_DIR", "./downloads")
 # Answer to the mandatory "AI usage" disclosure of YouTube Studio. The
 # publish button stays disabled until the question is answered.
 AI_DISCLOSURE = os.getenv("AI_DISCLOSURE", "No")
-# Category assigned to every upload. YouTube Studio requires one.
-YOUTUBE_CATEGORY = os.getenv("YOUTUBE_CATEGORY", "Scienza e tecnologia")
 
 # =============================================================================
 # AGENT CONFIGURATION
