@@ -90,6 +90,14 @@ PLACEHOLDER_MARKERS = (
 #: Files that are never scanned (the scanner itself would match its own rules).
 SELF_EXCLUDE = {"scripts/check_secrets.py"}
 
+#: A file whose first lines contain this marker is skipped. It is the escape
+#: hatch for test fixtures, which have to embed credentials in their real
+#: format to test the detection rules.
+ALLOW_MARKER = "secret-scan: allow"
+
+#: How many leading lines are inspected for the allow marker.
+ALLOW_MARKER_LINES = 20
+
 #: Minimum Shannon entropy (bits per character) for the generic rule.
 MIN_ENTROPY = 3.0
 
@@ -116,6 +124,12 @@ def is_placeholder(value: str) -> bool:
     """Return True when *value* looks like a documentation placeholder."""
     lowered = value.lower()
     return any(marker in lowered for marker in PLACEHOLDER_MARKERS)
+
+
+def is_allowed(text: str) -> bool:
+    """Return True when *text* opts out of the scan via the allow marker."""
+    header = "\n".join(text.splitlines()[:ALLOW_MARKER_LINES])
+    return ALLOW_MARKER in header
 
 
 def redact(value: str) -> str:
@@ -209,11 +223,35 @@ def history_blobs() -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------
 
 
-def scan_working_tree(paths: list[str], root: Path) -> list[str]:
+def allowed_paths(root: Path) -> set[str]:
+    """Return the tracked paths that opt out of the scan.
+
+    The exemption is a property of the *file*, not of a single blob: a file
+    that carries the allow marker today is exempt for all its historical
+    versions too. Otherwise an old revision of a test fixture would keep
+    failing the history scan forever.
+    """
+    allowed: set[str] = set()
+    for rel in tracked_files():
+        if rel in SELF_EXCLUDE:
+            continue
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = read_text(path)
+        if text is not None and is_allowed(text):
+            allowed.add(rel)
+    return allowed
+
+
+def scan_working_tree(
+    paths: list[str], root: Path, allowed: set[str] | None = None
+) -> list[str]:
     """Scan the given repository-relative paths in the working tree."""
+    allowed = allowed or set()
     findings: list[str] = []
     for rel in paths:
-        if rel in SELF_EXCLUDE:
+        if rel in SELF_EXCLUDE or rel in allowed:
             continue
         path = root / rel
         if not path.is_file():
@@ -221,15 +259,18 @@ def scan_working_tree(paths: list[str], root: Path) -> list[str]:
         text = read_text(path)
         if text is None:
             continue
+        if is_allowed(text):
+            continue
         findings.extend(scan_text(text, rel))
     return findings
 
 
-def scan_history(root: Path) -> list[str]:
+def scan_history(root: Path, allowed: set[str] | None = None) -> list[str]:
     """Scan every blob stored in the git history."""
+    allowed = allowed or set()
     findings: list[str] = []
     for sha, path in history_blobs():
-        if path in SELF_EXCLUDE:
+        if path in SELF_EXCLUDE or path in allowed:
             continue
         content = git("cat-file", "-p", sha)
         if not content:
@@ -264,17 +305,19 @@ def main(argv: list[str] | None = None) -> int:
         print("not a git repository: nothing to scan", file=sys.stderr)
         return 0
 
+    allowed = allowed_paths(root)
+
     if args.history:
         targets: list[str] = []
-        findings = scan_history(root)
+        findings = scan_history(root, allowed)
         scope = "git history"
     elif args.all:
         targets = tracked_files()
-        findings = scan_working_tree(targets, root)
+        findings = scan_working_tree(targets, root, allowed)
         scope = "tracked files"
     else:
         targets = staged_files()
-        findings = scan_working_tree(targets, root)
+        findings = scan_working_tree(targets, root, allowed)
         scope = "staged files"
 
     if findings:

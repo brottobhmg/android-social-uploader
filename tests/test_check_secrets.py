@@ -1,4 +1,11 @@
-"""Tests for the secret scanner used by the pre-commit hook and by CI."""
+"""Tests for the secret scanner used by the pre-commit hook and by CI.
+
+This file embeds sample credentials in the exact format of the real ones, on
+purpose: they are the fixtures the detection rules are tested against. The
+scanner therefore skips this file.
+
+secret-scan: allow
+"""
 
 import sys
 from pathlib import Path
@@ -8,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.check_secrets import (  # noqa: E402
+    is_allowed,
     is_placeholder,
     redact,
     scan_text,
@@ -104,6 +112,25 @@ def test_ignores_the_scanner_itself_when_asked_for_working_tree(tmp_path):
     from scripts.check_secrets import SELF_EXCLUDE
 
     assert "scripts/check_secrets.py" in SELF_EXCLUDE
+
+
+# --------------------------------------------------------------------------
+# The allow marker
+# --------------------------------------------------------------------------
+
+
+def test_allow_marker_opts_a_file_out_of_the_scan():
+    text = ("secret-scan: allow\nK = \"" + _s("nvapi-", "0123456789abcdefghijklmnopqrstuv") + "\"\n")
+    assert is_allowed(text) is True
+
+
+def test_allow_marker_must_be_in_the_header():
+    body = "\n" * 40 + "secret-scan: allow\n"
+    assert is_allowed(body) is False
+
+
+def test_a_file_without_the_marker_is_not_allowed():
+    assert is_allowed(("K = \"" + _s("nvapi-", "0123456789abcdefghijklmnopqrstuv") + "\"\n")) is False
 
 
 # --------------------------------------------------------------------------

@@ -55,6 +55,24 @@ credential, never the credential itself.
 > string, a base64 blob or a novel format can still slip through — keep using
 > `.env` and treat the hook as a backstop, not as the primary control.
 
+### Exempting a file
+
+A file can opt out of the scan by carrying the marker `secret-scan: allow` in
+its first lines:
+
+```python
+"""Tests for the secret scanner.
+
+secret-scan: allow
+"""
+```
+
+The exemption is a property of the *file*, so it also covers the historical
+revisions of that file. It exists for test fixtures, which have to embed
+credentials in their real format to test the detection rules. Use it
+sparingly: the marker is visible in review, and it disables the check for
+everything that file contains.
+
 ## Rotating the LLM provider keys
 
 The framework supports three providers (see `llm_provider.py`):
