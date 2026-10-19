@@ -26,11 +26,24 @@ PHONE_DIR = "/storage/emulated/0/Download/BotAutomazione"
 
 
 def _download_video(job_id: int, local_path: str) -> bool:
-    """Download the video for a job from the backend API."""
+    """Download the video for a job from the backend API.
+
+    The download is a streaming request: the headers are passed to the GET
+    itself, so the token is sent with the request that opens the stream and
+    not only with the "simple" calls.
+
+    Raises:
+        config.ApiAuthError: the server rejected the API token.
+    """
     config.debug_print(f"Downloading video for job {job_id}...")
     resp = requests.get(
-        f"{config.API_URL}/api/download/{job_id}/video", stream=True, timeout=30
+        f"{config.API_URL}/api/download/{job_id}/video",
+        headers=config.api_headers("video/mp4"),
+        stream=True,
+        timeout=30,
     )
+    if resp.status_code in (401, 503):
+        raise config.ApiAuthError(config.auth_error_message(resp.status_code))
     if resp.status_code != 200:
         config.debug_print(f"Unable to download video: {resp.status_code}")
         return False
@@ -41,9 +54,19 @@ def _download_video(job_id: int, local_path: str) -> bool:
 
 
 def _download_metadata(job_id: int, local_path: str) -> bool:
-    """Download the JSON metadata for a job from the backend API."""
+    """Download the JSON metadata for a job from the backend API.
+
+    Raises:
+        config.ApiAuthError: the server rejected the API token.
+    """
     config.debug_print(f"Downloading JSON for job {job_id}...")
-    resp = requests.get(f"{config.API_URL}/api/download/{job_id}/json", timeout=10)
+    resp = requests.get(
+        f"{config.API_URL}/api/download/{job_id}/json",
+        headers=config.api_headers(),
+        timeout=10,
+    )
+    if resp.status_code in (401, 503):
+        raise config.ApiAuthError(config.auth_error_message(resp.status_code))
     if resp.status_code != 200:
         config.debug_print(f"Unable to download JSON: {resp.status_code}")
         return False
@@ -156,6 +179,11 @@ def process_job(job_id: int) -> bool:
         _cleanup_local_files([video_local, json_local])
 
         return True
+    except config.ApiAuthError:
+        # A refused token is a configuration error: let it reach the caller
+        # instead of turning it into a generic "job failed", which would be
+        # reported as a failed job and retried forever.
+        raise
     except Exception as e:
         config.debug_print(f"Error while processing job {job_id}: {e}")
         return False

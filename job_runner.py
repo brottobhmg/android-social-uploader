@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import sys
 import time
 
 from job_processor import process_job
@@ -64,6 +65,13 @@ def poll_for_jobs() -> None:
             else:
                 requests_post_job_status(job_id, "failed")
                 config.debug_print(f"❌ Job {job_id} marked as FAILED")
+        except config.ApiAuthError as e:
+            # The token was refused: a configuration error, not a transient
+            # one. Retrying immediately would flood the logs with requests
+            # that cannot succeed, so wait long and try again later.
+            config.logger.error(str(e))
+            time.sleep(config.AUTH_ERROR_BACKOFF)
+            continue
         except Exception as e:
             config.debug_print(f"Network error or exception during polling: {e}")
 
@@ -71,7 +79,16 @@ def poll_for_jobs() -> None:
 
 
 def requests_get_next_job():
-    """Fetch the next pending job from the backend API."""
+    """Fetch the next pending job from the backend API.
+
+    Returns:
+        A ``(job_id, source_link)`` tuple, or ``None`` when the queue is
+        empty or the call failed.
+
+    Raises:
+        config.ApiAuthError: the server rejected the API token. That is a
+            configuration error, so the caller must not retry it.
+    """
     import requests
 
     if not config.API_URL:
@@ -81,7 +98,20 @@ def requests_get_next_job():
         return None
 
     # (connect, read) timeout: 3s to establish TCP+TLS, 15s to get a response.
-    response = requests.get(f"{config.API_URL}/api/next-job", timeout=(3.05, 15))
+    response = requests.get(
+        f"{config.API_URL}/api/next-job",
+        headers=config.api_headers(),
+        timeout=(3.05, 15),
+    )
+    if response.status_code in (401, 503):
+        raise config.ApiAuthError(config.auth_error_message(response.status_code))
+    if response.status_code == 429:
+        config.logger.warning(
+            f"Rate limit reached on /api/next-job: backing off for "
+            f"{config.RATE_LIMIT_BACKOFF}s"
+        )
+        time.sleep(config.RATE_LIMIT_BACKOFF)
+        return None
     if response.status_code != 200:
         body = response.text.strip()[:200]
         config.logger.warning(
@@ -107,9 +137,22 @@ def requests_post_job_status(job_id: int, status: str, attempts: int = 3) -> Non
     url = f"{config.API_URL}/api/job-{status}/{job_id}"
     for attempt in range(1, attempts + 1):
         try:
-            response = requests.post(url, timeout=(3.05, 15))
+            response = requests.post(
+                url, headers=config.api_headers(), timeout=(3.05, 15)
+            )
             if response.status_code in (200, 404):
                 return
+            if response.status_code in (401, 503):
+                # Configuration error: retrying would only fill the logs.
+                config.logger.error(config.auth_error_message(response.status_code))
+                return
+            if response.status_code == 429:
+                config.logger.warning(
+                    f"Rate limit reached while reporting job {job_id}: backing "
+                    f"off for {config.RATE_LIMIT_BACKOFF}s"
+                )
+                time.sleep(config.RATE_LIMIT_BACKOFF)
+                continue
             config.logger.warning(
                 f"Report for job {job_id} answered HTTP {response.status_code}"
             )
@@ -156,6 +199,12 @@ if __name__ == "__main__":
     # NOTE: check `is not None` — a job id of 0 is a valid value and is falsy
     # in Python, so `if args.job_id:` would wrongly fall into polling mode.
     if args.job_id is not None:
-        process_job(args.job_id)
+        try:
+            process_job(args.job_id)
+        except config.ApiAuthError as e:
+            # A refused token is a configuration error: report it and stop
+            # instead of crashing with a traceback.
+            config.logger.error(str(e))
+            sys.exit(2)
     else:
         main()
