@@ -161,13 +161,24 @@ def process_job(job_id: int) -> bool:
             TikTokUploader(),
             YouTubeUploader(),
         ]
-        # NOTE: "completed" here means no exception was raised, not that the
-        # post is live (upload() returns True unconditionally and the return
-        # value is ignored). Add a published-post check if false positives
-        # show up in the dashboard.
+        # A platform that fails must fail the job: reporting "completed"
+        # while a platform never published leaves the queue in a state where
+        # nobody notices the missing post.
+        failed_platforms = []
         for uploader in uploaders:
-            uploader.upload(phone_paths["video"], metadata)
+            if not uploader.upload(phone_paths["video"], metadata):
+                failed_platforms.append(uploader.platform_name)
+                config.logger.error(
+                    f"{uploader.platform_name} did not publish the video for job {job_id}"
+                )
             time.sleep(20)
+
+        if failed_platforms:
+            config.logger.error(
+                f"Job {job_id}: the following platforms did not publish: "
+                f"{', '.join(failed_platforms)}"
+            )
+            return False
 
         # Generate markdown guide only in debug mode (keeps the working tree
         # clean during normal runs).

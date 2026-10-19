@@ -41,6 +41,23 @@ def scan_device(select=None):
     return devices
 
 
+def run_job(job_id: int) -> bool:
+    """Process a job and report its outcome to the backend.
+
+    The job is reported exactly once, in both modes. A job that is processed
+    but never reported stays in the queue and is handed out again by the next
+    poll, which would publish the same video twice.
+    """
+    success = process_job(job_id)
+    if success:
+        requests_post_job_status(job_id, "completed")
+        config.debug_print(f"🎉 Job {job_id} completed successfully!")
+    else:
+        requests_post_job_status(job_id, "failed")
+        config.debug_print(f"❌ Job {job_id} marked as FAILED")
+    return success
+
+
 def poll_for_jobs() -> None:
     """Continuously poll the backend API for pending jobs and process them."""
     config.debug_print(
@@ -58,13 +75,7 @@ def poll_for_jobs() -> None:
             job_id, source_link = response
             config.debug_print(f"🔔 Found pending job {job_id} for {source_link}")
 
-            success = process_job(job_id)
-            if success:
-                requests_post_job_status(job_id, "completed")
-                config.debug_print(f"🎉 Job {job_id} completed successfully!")
-            else:
-                requests_post_job_status(job_id, "failed")
-                config.debug_print(f"❌ Job {job_id} marked as FAILED")
+            run_job(job_id)
         except config.ApiAuthError as e:
             # The token was refused: a configuration error, not a transient
             # one. Retrying immediately would flood the logs with requests
@@ -200,7 +211,7 @@ if __name__ == "__main__":
     # in Python, so `if args.job_id:` would wrongly fall into polling mode.
     if args.job_id is not None:
         try:
-            process_job(args.job_id)
+            run_job(args.job_id)
         except config.ApiAuthError as e:
             # A refused token is a configuration error: report it and stop
             # instead of crashing with a traceback.

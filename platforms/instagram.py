@@ -60,7 +60,12 @@ class InstagramUploader(BaseUploader):
         time.sleep(2)
 
         # 8. Tap "Share" (786, 2231 -> 72.8, 93.0)
-        uia.agent_click(72.8, 93.0, "Share button at the bottom to publish")
+        if not uia.agent_click(72.8, 93.0, "Share button at the bottom to publish"):
+            config.logger.error(
+                "Instagram: the Share button could not be clicked: the reel was "
+                "NOT published."
+            )
+            return False
 
         config.debug_print("✅ Instagram operation completed successfully!")
         return True

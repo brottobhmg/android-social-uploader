@@ -63,7 +63,12 @@ class TikTokUploader(BaseUploader):
         time.sleep(1)
 
         # Confirm publication
-        uia.agent_click(64.8, 96.91, "'Publish' or 'Post' button at the bottom right, usually colored, NOT the 'Next' button")
+        if not uia.agent_click(64.8, 96.91, "'Publish' or 'Post' button at the bottom right, usually colored, NOT the 'Next' button"):
+            config.logger.error(
+                "TikTok: the Publish button could not be clicked: the video was "
+                "NOT published."
+            )
+            return False
 
         config.debug_print("✅ TikTok operation completed successfully!")
         return True

@@ -126,6 +126,15 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "15"))
 LOCAL_DOWNLOAD_DIR = os.getenv("LOCAL_DOWNLOAD_DIR", "./downloads")
 
 # =============================================================================
+# YOUTUBE STUDIO
+# =============================================================================
+# Answer to the mandatory "AI usage" disclosure of YouTube Studio. The
+# publish button stays disabled until the question is answered.
+AI_DISCLOSURE = os.getenv("AI_DISCLOSURE", "No")
+# Category assigned to every upload. YouTube Studio requires one.
+YOUTUBE_CATEGORY = os.getenv("YOUTUBE_CATEGORY", "Scienza e tecnologia")
+
+# =============================================================================
 # AGENT CONFIGURATION
 # =============================================================================
 MAX_AGENT_ATTEMPTS = int(os.getenv("MAX_AGENT_ATTEMPTS", "10"))

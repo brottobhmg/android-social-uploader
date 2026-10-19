@@ -211,6 +211,21 @@ The client reacts to the backend answers as follows:
 A wrong token is therefore reported once, clearly, and never turns into a
 stream of identical requests.
 
+### Upload verification
+
+A tap on a disabled control is silently ignored by Android, so the framework
+never reports one as a success: before clicking, `agent_click` checks the
+`enabled` attribute of the element in the accessibility tree and refuses the
+tap when the control is disabled, logging which field is probably still
+missing. A platform uploader that cannot click its publish button returns a
+failure, and a job with a failed platform is reported as `failed` instead of
+`completed`.
+
+YouTube Studio additionally requires two fields before the publish button
+becomes available: the **AI usage disclosure** and a **category**. Both are
+filled by the uploader and can be configured with `AI_DISCLOSURE` and
+`YOUTUBE_CATEGORY`.
+
 ## 🎮 Usage
 
 ### Job processing mode (`job_runner.py`)

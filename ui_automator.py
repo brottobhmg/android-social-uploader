@@ -157,6 +157,77 @@ def wake_and_unlock():
 # Accessibility tree parsing
 # ---------------------------------------------------------------------------
 
+def element_state_at(
+    xml_str: str,
+    x_prop: float,
+    y_prop: float,
+    screen_width: int,
+    screen_height: int,
+) -> dict | None:
+    """Return the attributes of the element at the given position.
+
+    The coordinates are in the 0-100 scale used by the rest of the module.
+    The element is the smallest one whose bounds contain the point, which is
+    the one the user would actually tap. Returns ``None`` when no element
+    covers that point.
+
+    The returned mapping holds ``text``, ``class`` and ``enabled``.
+    """
+    if not xml_str:
+        return None
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return None
+
+    px = x_prop / 100.0 * screen_width
+    py = y_prop / 100.0 * screen_height
+
+    best = None
+    best_area = None
+    for node in root.iter("node"):
+        coords = list(map(int, re.findall(r"\d+", node.get("bounds", ""))))
+        if len(coords) != 4:
+            continue
+        x1, y1, x2, y2 = coords
+        if x1 == x2 or y1 == y2:
+            continue
+        if not (x1 <= px <= x2 and y1 <= py <= y2):
+            continue
+        area = (x2 - x1) * (y2 - y1)
+        if best_area is None or area < best_area:
+            best = node
+            best_area = area
+
+    if best is None:
+        return None
+    return {
+        "text": (best.get("text") or best.get("content-desc") or "").strip(),
+        "class": best.get("class", "").split(".")[-1],
+        "enabled": best.get("enabled", "true") != "false",
+    }
+
+
+def is_enabled_at(
+    xml_str: str,
+    x_prop: float,
+    y_prop: float,
+    screen_width: int,
+    screen_height: int,
+) -> bool | None:
+    """Return whether the element at the given position is enabled.
+
+    ``None`` means that no element covers that point, so nothing can be
+    said about it. A tap on a disabled control is silently ignored by the
+    system: without this check the automation would report a success that
+    never happened.
+    """
+    state = element_state_at(xml_str, x_prop, y_prop, screen_width, screen_height)
+    if state is None:
+        return None
+    return state["enabled"]
+
+
 def parse_ui_tree(xml_str: str, screen_width: int, screen_height: int, max_elements: int = 30) -> str:
     """Parse a UIAutomator XML dump and return a compact text summary of clickable elements.
 
@@ -451,6 +522,27 @@ def agent_click(x_prop, y_prop, description, max_attempts=10):
                 # Execute final click
                 rel_x = norm_x / 10.0
                 rel_y = norm_y / 10.0
+
+                # A disabled control swallows the tap without any feedback:
+                # the screen does not change and the intent of the step is
+                # lost. Refuse the click instead of reporting a success that
+                # never happened.
+                enabled = is_enabled_at(xml_raw, rel_x, rel_y, w, h)
+                if enabled is False:
+                    state = element_state_at(xml_raw, rel_x, rel_y, w, h) or {}
+                    config.logger.error(
+                        f"Target '{description}' is DISABLED at ({rel_x:.1f}, {rel_y:.1f}) "
+                        f"[{state.get('class', '?')}]: the tap would have been ignored. "
+                        f"Some required field is probably still missing."
+                    )
+                    AGENT_HISTORY.append(
+                        f"Target '{description}' was disabled at ({rel_x:.1f}, {rel_y:.1f})"
+                    )
+                    step_recorder.record_click(
+                        description, x_prop, y_prop, success=False, attempts=attempt
+                    )
+                    return False
+
                 config.debug_print(f"Clicking the final target at the correct coordinates: ({rel_x}, {rel_y})")
                 touch_relative(rel_x, rel_y)
                 step_recorder.record_click(description, x_prop, y_prop, success=True, attempts=attempt)
@@ -500,6 +592,15 @@ def agent_click(x_prop, y_prop, description, max_attempts=10):
     # If it fails after max_attempts, execute the final fallback
     config.debug_print("⚠️ Agent could not click the final target. Falling back to the original coordinates.")
     config.debug_save_screenshot(img_bytes, hint_x_1000, hint_y_1000, "fallback", description)
+    w, h = get_screen_size()
+    enabled = is_enabled_at(dump_ui_tree(), x_prop, y_prop, w, h)
+    if enabled is False:
+        config.logger.error(
+            f"Target '{description}' is DISABLED at ({x_prop}, {y_prop}): "
+            f"the fallback tap would have been ignored too."
+        )
+        step_recorder.record_click(description, x_prop, y_prop, success=False, attempts=max_attempts)
+        return False
     touch_relative(x_prop, y_prop)
     step_recorder.record_click(description, x_prop, y_prop, success=False, attempts=max_attempts)
     return False

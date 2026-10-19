@@ -280,3 +280,46 @@ def test_the_metadata_shape_is_untouched(monkeypatch, tmp_path):
     job_processor._download_metadata(7, str(target))
 
     assert json.loads(target.read_text(encoding="utf-8")) == {"titolo": "t"}
+
+
+# --------------------------------------------------------------------------
+# The job is reported exactly once
+# --------------------------------------------------------------------------
+
+
+def test_a_successful_job_is_reported_completed(monkeypatch):
+    reports = []
+    monkeypatch.setattr(job_runner, "process_job", lambda job_id: True)
+    monkeypatch.setattr(
+        job_runner, "requests_post_job_status", lambda job_id, status: reports.append((job_id, status))
+    )
+
+    job_runner.run_job(14)
+
+    assert reports == [(14, "completed")]
+
+
+def test_a_failed_job_is_reported_failed(monkeypatch):
+    reports = []
+    monkeypatch.setattr(job_runner, "process_job", lambda job_id: False)
+    monkeypatch.setattr(
+        job_runner, "requests_post_job_status", lambda job_id, status: reports.append((job_id, status))
+    )
+
+    job_runner.run_job(14)
+
+    assert reports == [(14, "failed")]
+
+
+def test_the_job_is_reported_exactly_once(monkeypatch):
+    """A job that is processed but never reported stays in the queue and is
+    handed out again by the next poll, publishing the same video twice."""
+    reports = []
+    monkeypatch.setattr(job_runner, "process_job", lambda job_id: True)
+    monkeypatch.setattr(
+        job_runner, "requests_post_job_status", lambda job_id, status: reports.append((job_id, status))
+    )
+
+    job_runner.run_job(14)
+
+    assert len(reports) == 1
