@@ -7,6 +7,7 @@ which controls debug prints and artifact generation.
 
 import logging
 import os
+from typing import Dict
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -66,6 +67,57 @@ DEVICE_ID = os.getenv("DEVICE_ID", "")
 # Backend API URL for job polling. Must be set via .env (no default to avoid
 # leaking private infrastructure endpoints).
 API_URL = os.getenv("API_URL", "")
+# Bearer token for the backend job API. Every job route requires it, so it is
+# read from .env like the other credentials: it must never be hardcoded.
+API_TOKEN = os.getenv("API_TOKEN", "")
+
+# Seconds to wait before polling again after the server rejected the token.
+# A rejected token is a configuration error, so the client waits long instead
+# of hammering the server with requests that cannot succeed.
+AUTH_ERROR_BACKOFF = int(os.getenv("AUTH_ERROR_BACKOFF", "300"))
+
+# Seconds to wait when the server answers 429 (rate limit). The limit is
+# shared with the dashboard, so retrying sooner would extend the penalty.
+RATE_LIMIT_BACKOFF = int(os.getenv("RATE_LIMIT_BACKOFF", "60"))
+
+
+class ApiAuthError(RuntimeError):
+    """The backend rejected the API token, or has none configured.
+
+    A configuration error and not a transient one: retrying cannot make it
+    work, so the callers must not retry on it.
+    """
+
+
+def api_headers(accept: str = "application/json") -> Dict[str, str]:
+    """Return the HTTP headers required by the backend job routes.
+
+    Every job route requires ``Authorization: Bearer <API_TOKEN>``. The
+    dashboard is protected by HTTP-Basic instead and is never used by this
+    client.
+    """
+    headers = {"Accept": accept}
+    if API_TOKEN:
+        headers["Authorization"] = f"Bearer {API_TOKEN}"
+    return headers
+
+
+def auth_error_message(status_code: int) -> str:
+    """Return the message for a backend that refused the API token.
+
+    ``401`` means the token is missing, uses another scheme or is wrong;
+    ``503`` means the server has no token configured at all. Both are
+    configuration errors, so both are reported the same way.
+    """
+    if status_code == 503:
+        return (
+            "API token rifiutato dal server (503): il server non ha un "
+            "API_TOKEN configurato, controlla la configurazione lato server"
+        )
+    return (
+        "API token rifiutato dal server (401): controlla API_TOKEN "
+        "(header mancante, schema diverso o token sbagliato)"
+    )
 
 # =============================================================================
 # ADB / DEVICE CONFIGURATION
