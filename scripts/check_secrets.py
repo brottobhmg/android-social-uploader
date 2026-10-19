@@ -18,6 +18,7 @@ terminal scrollback or a CI log.
 from __future__ import annotations
 
 import argparse
+import bisect
 import math
 import re
 import subprocess
@@ -101,6 +102,21 @@ ALLOW_MARKER_LINES = 20
 #: Minimum Shannon entropy (bits per character) for the generic rule.
 MIN_ENTROPY = 3.0
 
+#: Content larger than this is treated as data, not as source: only the
+#: high-confidence vendor patterns are applied to it. One megabyte is far
+#: above any configuration or source file and far below the size of the data
+#: dumps a history can hold.
+MAX_FULL_SCAN = 1 << 20
+
+#: Chunk size used to scan oversized content, with a small overlap so that a
+#: pattern spanning a chunk boundary is still caught.
+CHUNK_SIZE = 1 << 20
+CHUNK_OVERLAP = 256
+
+#: How many commits are handed to a single `git grep` invocation. The limit
+#: keeps the command line short on repositories with a long history.
+GREP_BATCH = 400
+
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -138,24 +154,74 @@ def redact(value: str) -> str:
     return f"{prefix}... ({len(value)} chars)"
 
 
-def scan_text(text: str, label: str) -> list[str]:
-    """Return a list of findings for *text*, one per line, each prefixed by *label*."""
-    findings: list[str] = []
-    for line_no, line in enumerate(text.splitlines(), start=1):
-        for name, pattern in VENDOR_RULES:
-            for match in pattern.finditer(line):
-                findings.append(
-                    f"{label}:{line_no}: [{name}] {redact(match.group(0))}"
-                )
-        for match in GENERIC_RULE.finditer(line):
-            value = match.group(2)
-            if is_placeholder(value):
-                continue
-            if shannon_entropy(value) < MIN_ENTROPY:
-                continue
-            findings.append(
-                f"{label}:{line_no}: [generic secret assignment] {redact(value)}"
+def _line_index(text: str) -> list[int]:
+    """Return the offset at which every line of *text* starts."""
+    return [0] + [match.end() for match in re.finditer("\n", text)]
+
+
+def scan_vendor(text: str, label: str, line_offset: int = 0) -> list[str]:
+    """Return the findings of the high-confidence vendor patterns."""
+    line_starts = _line_index(text)
+    found: list[tuple[int, str]] = []
+    for name, pattern in VENDOR_RULES:
+        for match in pattern.finditer(text):
+            line = bisect.bisect_right(line_starts, match.start()) + line_offset
+            found.append(
+                (line, f"{label}:{line}: [{name}] {redact(match.group(0))}")
             )
+    found.sort(key=lambda item: item[0])
+    return [text for _, text in found]
+
+
+def scan_generic(text: str, label: str, line_offset: int = 0) -> list[str]:
+    """Return the findings of the low-confidence, entropy-checked rule."""
+    line_starts = _line_index(text)
+    found: list[tuple[int, str]] = []
+    for match in GENERIC_RULE.finditer(text):
+        value = match.group(2)
+        if is_placeholder(value):
+            continue
+        if shannon_entropy(value) < MIN_ENTROPY:
+            continue
+        line = bisect.bisect_right(line_starts, match.start()) + line_offset
+        found.append(
+            (line, f"{label}:{line}: [generic secret assignment] {redact(value)}")
+        )
+    found.sort(key=lambda item: item[0])
+    return [text for _, text in found]
+
+
+def scan_text(text: str, label: str) -> list[str]:
+    """Return a list of findings for *text*, each prefixed by *label*.
+
+    The patterns are applied to the whole text instead of line by line: on a
+    large file the per-line loop dominates the runtime. Line numbers are
+    recovered afterwards from the match offsets.
+    """
+    return scan_vendor(text, label) + scan_generic(text, label)
+
+
+def scan_bytes(raw: bytes, label: str) -> list[str]:
+    """Scan raw content, choosing the strategy according to its size.
+
+    Small content gets the full treatment. Oversized content is treated as
+    data: only the high-confidence vendor patterns are applied, chunk by
+    chunk, so that a dump of results is not scanned line by line.
+    """
+    if b"\x00" in raw:
+        return []
+    if len(raw) <= MAX_FULL_SCAN:
+        return scan_text(raw.decode("utf-8", "replace"), label)
+
+    findings: list[str] = []
+    line_offset = 0
+    start = 0
+    while start < len(raw):
+        chunk = raw[start : start + CHUNK_SIZE + CHUNK_OVERLAP]
+        text = chunk.decode("utf-8", "replace")
+        findings.extend(scan_vendor(text, label, line_offset))
+        line_offset += text.count("\n")
+        start += CHUNK_SIZE
     return findings
 
 
@@ -175,10 +241,11 @@ def read_text(path: Path) -> str | None:
 # --------------------------------------------------------------------------
 
 
-def git(*args: str) -> str:
-    """Run a git command in the current repository and return stdout."""
+def git(*args: str, cwd: Path | None = None) -> str:
+    """Run a git command and return stdout (empty when the command fails)."""
     result = subprocess.run(
         ["git", *args],
+        cwd=str(cwd) if cwd else None,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -189,33 +256,31 @@ def git(*args: str) -> str:
     return result.stdout
 
 
-def staged_files() -> list[str]:
+def staged_files(root: Path) -> list[str]:
     """Return the paths staged for commit."""
-    output = git("diff", "--cached", "--name-only", "--diff-filter=ACM")
+    output = git("diff", "--cached", "--name-only", "--diff-filter=ACM", cwd=root)
     return [line for line in output.splitlines() if line.strip()]
 
 
-def tracked_files() -> list[str]:
+def tracked_files(root: Path) -> list[str]:
     """Return every path tracked by git."""
-    output = git("ls-files")
+    output = git("ls-files", cwd=root)
     return [line for line in output.splitlines() if line.strip()]
 
 
-def history_blobs() -> list[tuple[str, str]]:
-    """Return (blob sha, path) for every blob reachable from any ref."""
-    seen: dict[str, str] = {}
-    for commit in git("rev-list", "--all").splitlines():
-        if not commit.strip():
-            continue
-        for line in git(
-            "ls-tree", "-r", "--format=%(objectname) %(path)", commit
-        ).splitlines():
-            if not line.strip():
-                continue
-            sha, _, path = line.partition(" ")
-            if sha and path and sha not in seen:
-                seen[sha] = path
-    return sorted(seen.items(), key=lambda item: item[1])
+def history_objects(root: Path) -> list[tuple[str, str]]:
+    """Return (sha, path) for every object reachable from any ref.
+
+    A single `git rev-list --objects --all` is used instead of walking every
+    commit: the latter costs one subprocess per commit, which is unusable on
+    a repository with a long history.
+    """
+    objects: list[tuple[str, str]] = []
+    for line in git("rev-list", "--objects", "--all", cwd=root).splitlines():
+        sha, _, path = line.partition(" ")
+        if sha:
+            objects.append((sha, path))
+    return objects
 
 
 # --------------------------------------------------------------------------
@@ -232,7 +297,7 @@ def allowed_paths(root: Path) -> set[str]:
     failing the history scan forever.
     """
     allowed: set[str] = set()
-    for rel in tracked_files():
+    for rel in tracked_files(root):
         if rel in SELF_EXCLUDE:
             continue
         path = root / rel
@@ -256,27 +321,183 @@ def scan_working_tree(
         path = root / rel
         if not path.is_file():
             continue
-        text = read_text(path)
-        if text is None:
+        try:
+            raw = path.read_bytes()
+        except OSError:
             continue
+        if b"\x00" in raw:
+            continue
+        text = raw.decode("utf-8", "replace")
         if is_allowed(text):
             continue
-        findings.extend(scan_text(text, rel))
+        findings.extend(scan_bytes(raw, rel))
     return findings
 
 
-def scan_history(root: Path, allowed: set[str] | None = None) -> list[str]:
-    """Scan every blob stored in the git history."""
+def vendor_matches_in_line(content: str, label: str, line_no: int) -> list[str]:
+    """Return the vendor findings of a single line, with an explicit line number."""
+    found: list[str] = []
+    for name, pattern in VENDOR_RULES:
+        for match in pattern.finditer(content):
+            found.append(
+                f"{label}:{line_no}: [{name}] {redact(match.group(0))}"
+            )
+    return found
+
+
+def to_ere(pattern: str) -> str:
+    """Translate a Python regular expression into a POSIX ERE compatible one.
+
+    `git grep -E` uses the POSIX extended syntax, which knows neither the
+    non-capturing group `(?:...)` nor the `\\s` shorthand. The patterns are
+    written in Python syntax and translated here for the fallback path.
+    """
+    return (
+        pattern.replace("(?:", "(")
+        .replace(r"\s", "[[:space:]]")
+        .replace(r"\d", "[0-9]")
+        .replace(r"\w", "[[:alnum:]_]")
+    )
+
+
+def _run_git_grep(
+    pattern: str, commits: list[str], pcre: bool, root: Path
+) -> subprocess.CompletedProcess:
+    """Run `git grep` over *commits* with the given pattern."""
+    args = ["git", "grep", "-I", "-n"]
+    args.append("-P" if pcre else "-E")
+    args += ["-e", pattern, *commits]
+    return subprocess.run(
+        args,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def grep_history_vendor(
+    root: Path, allowed: set[str] | None = None
+) -> list[str]:
+    """Find vendor-format secrets anywhere in the history with `git grep`.
+
+    `git grep` is implemented in C and walks every commit in a fraction of a
+    second, even on a history that holds gigabytes of content. It is used for
+    the high-confidence patterns, where the format alone is enough to report.
+
+    PCRE is used when the local git supports it, with a POSIX ERE fallback
+    otherwise. A failure of the search is reported instead of being ignored:
+    a silent error would look exactly like a clean repository.
+
+    Returns the findings and the number of commits that were searched.
+    """
     allowed = allowed or set()
+    commits = git("rev-list", "--all", cwd=root).split()
+    if not commits:
+        return [], 0
+
+    pattern = "|".join(rule.pattern for _, rule in VENDOR_RULES)
     findings: list[str] = []
-    for sha, path in history_blobs():
-        if path in SELF_EXCLUDE or path in allowed:
-            continue
-        content = git("cat-file", "-p", sha)
-        if not content:
-            continue
-        findings.extend(scan_text(content, f"{path}@{sha[:8]}"))
-    return findings
+    for start in range(0, len(commits), GREP_BATCH):
+        batch = commits[start : start + GREP_BATCH]
+        result = _run_git_grep(pattern, batch, pcre=True, root=root)
+        if result.returncode not in (0, 1):
+            # PCRE is not available in this git build: fall back to POSIX ERE.
+            result = _run_git_grep(to_ere(pattern), batch, pcre=False, root=root)
+        if result.returncode not in (0, 1):
+            raise RuntimeError(
+                "git grep failed while scanning the history: "
+                f"{result.stderr.strip() or result.returncode}"
+            )
+        for line in result.stdout.splitlines():
+            parts = line.split(":", 3)
+            if len(parts) != 4:
+                continue
+            _sha, path, line_no, content = parts
+            if path in SELF_EXCLUDE or path in allowed:
+                continue
+            findings.extend(
+                vendor_matches_in_line(content, f"{path}@{_sha[:8]}", line_no)
+            )
+    return findings, len(commits)
+
+
+def scan_history(
+    root: Path, allowed: set[str] | None = None
+) -> tuple[list[str], int]:
+    """Scan every blob stored in the git history.
+
+    The high-confidence patterns are searched with `git grep` (fast, and it
+    covers the content of every size), while the entropy-based rule is
+    applied in Python to the small blobs only: reading a history that holds
+    gigabytes of data dumps through Python would take minutes.
+
+    Returns the findings and the number of commits that were searched.
+    """
+    allowed = allowed or set()
+    findings, commits = grep_history_vendor(root, allowed)
+
+    objects = [
+        (sha, path)
+        for sha, path in history_objects(root)
+        if path not in SELF_EXCLUDE and path not in allowed
+    ]
+    if not objects:
+        return findings, commits
+
+    # Sizes come from a cheap --batch-check pass, so that the content of the
+    # oversized blobs never has to be read.
+    sizes: dict[str, int] = {}
+    check = subprocess.run(
+        ["git", "cat-file", "--batch-check"],
+        input="\n".join(sha for sha, _ in objects),
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    for line in check.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[1] == "blob":
+            sizes[parts[0]] = int(parts[2])
+
+    small = [
+        (sha, path)
+        for sha, path in objects
+        if sizes.get(sha, 0) <= MAX_FULL_SCAN
+    ]
+    if not small:
+        return findings, commits
+
+    process = subprocess.Popen(
+        ["git", "cat-file", "--batch"],
+        cwd=str(root),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    assert process.stdin is not None and process.stdout is not None
+    try:
+        process.stdin.write(b"".join(sha.encode() + b"\n" for sha, _ in small))
+        process.stdin.close()
+        for sha, path in small:
+            header = process.stdout.readline().decode("utf-8", "replace").strip()
+            parts = header.split()
+            if len(parts) != 3:
+                break
+            size = int(parts[2])
+            raw = process.stdout.read(size)
+            process.stdout.read(1)  # trailing newline
+            if parts[1] != "blob":
+                continue
+            content = raw.decode("utf-8", "replace")
+            findings.extend(scan_generic(content, f"{path}@{sha[:8]}"))
+    finally:
+        process.stdout.close()
+        process.wait()
+    return findings, commits
 
 
 # --------------------------------------------------------------------------
@@ -307,18 +528,27 @@ def main(argv: list[str] | None = None) -> int:
 
     allowed = allowed_paths(root)
 
-    if args.history:
-        targets: list[str] = []
-        findings = scan_history(root, allowed)
-        scope = "git history"
-    elif args.all:
-        targets = tracked_files()
-        findings = scan_working_tree(targets, root, allowed)
-        scope = "tracked files"
-    else:
-        targets = staged_files()
-        findings = scan_working_tree(targets, root, allowed)
-        scope = "staged files"
+    try:
+        if args.history:
+            findings, count = scan_history(root, allowed)
+            scope = "git history"
+            unit = "commit(s)"
+        elif args.all:
+            targets = tracked_files(root)
+            findings = scan_working_tree(targets, root, allowed)
+            count = len(targets)
+            scope = "tracked files"
+            unit = "file(s)"
+        else:
+            targets = staged_files(root)
+            findings = scan_working_tree(targets, root, allowed)
+            count = len(targets)
+            scope = "staged files"
+            unit = "file(s)"
+    except RuntimeError as error:
+        # A broken search must never be reported as a clean repository.
+        print(f"SECRET SCAN ERROR: {error}", file=sys.stderr)
+        return 2
 
     if findings:
         print(f"SECRET SCAN FAILED ({scope}): {len(findings)} finding(s)")
@@ -330,8 +560,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    count = len(targets) if not args.history else len(history_blobs())
-    print(f"secret scan OK ({scope}): {count} file(s) checked, no findings")
+    print(f"secret scan OK ({scope}): {count} {unit} checked, no findings")
     return 0
 
 

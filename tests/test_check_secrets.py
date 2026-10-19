@@ -7,6 +7,8 @@ scanner therefore skips this file.
 secret-scan: allow
 """
 
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,8 +20,10 @@ from scripts.check_secrets import (  # noqa: E402
     is_allowed,
     is_placeholder,
     redact,
+    scan_history,
     scan_text,
     shannon_entropy,
+    to_ere,
 )
 
 
@@ -131,6 +135,52 @@ def test_allow_marker_must_be_in_the_header():
 
 def test_a_file_without_the_marker_is_not_allowed():
     assert is_allowed(("K = \"" + _s("nvapi-", "0123456789abcdefghijklmnopqrstuv") + "\"\n")) is False
+
+
+# --------------------------------------------------------------------------
+# The history scan
+# --------------------------------------------------------------------------
+
+
+def _git(repo, *args):
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+@pytest.mark.skipif(
+    subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
+    reason="git is not available",
+)
+def test_history_scan_finds_a_credential_removed_from_the_head(tmp_path):
+    """A credential committed and then deleted must still be reported.
+
+    The history scan goes through `git grep`, whose POSIX regex dialect is
+    not the one the patterns are written in. A silent failure there would
+    look exactly like a clean repository, so the case is covered here.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", ".")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "test")
+
+    leaked = repo / "leaked.py"
+    leaked.write_text(("K = \"" + _s("nvapi-", "LUD4_75DSvPiFoGCAYEBlVnJBRPta16h4Ta-gkY07No8ihnB00") + "\"\n"))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add the key")
+
+    leaked.unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "remove the key")
+
+    findings, commits = scan_history(repo)
+    assert commits == 2
+    assert any("NVIDIA NIM" in finding for finding in findings), findings
+
+
+def test_to_ere_removes_the_python_only_syntax():
+    converted = to_ere(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
+    assert "(?:" not in converted
+    assert re.search(converted, (_s("AKIA", "IOSFODNN7EXAMPLE")))
 
 
 # --------------------------------------------------------------------------
