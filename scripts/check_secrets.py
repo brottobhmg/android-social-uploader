@@ -20,9 +20,11 @@ from __future__ import annotations
 import argparse
 import bisect
 import math
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -471,32 +473,43 @@ def scan_history(
     if not small:
         return findings, commits
 
-    process = subprocess.Popen(
-        ["git", "cat-file", "--batch"],
-        cwd=str(root),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    assert process.stdin is not None and process.stdout is not None
+    # The list of object ids is handed over through a file rather than
+    # through the pipe: writing thousands of ids into the pipe before
+    # reading anything out of it would deadlock as soon as the pipe buffer
+    # is full, because git would block on its output while we block on ours.
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".txt", delete=False, encoding="utf-8"
+    ) as handle:
+        for sha, _ in small:
+            handle.write(sha + "\n")
+        ids_file = handle.name
+
     try:
-        process.stdin.write(b"".join(sha.encode() + b"\n" for sha, _ in small))
-        process.stdin.close()
-        for sha, path in small:
-            header = process.stdout.readline().decode("utf-8", "replace").strip()
-            parts = header.split()
-            if len(parts) != 3:
-                break
-            size = int(parts[2])
-            raw = process.stdout.read(size)
-            process.stdout.read(1)  # trailing newline
-            if parts[1] != "blob":
-                continue
-            content = raw.decode("utf-8", "replace")
-            findings.extend(scan_generic(content, f"{path}@{sha[:8]}"))
+        with open(ids_file, "r", encoding="utf-8") as stdin:
+            process = subprocess.Popen(
+                ["git", "cat-file", "--batch"],
+                cwd=str(root),
+                stdin=stdin,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            assert process.stdout is not None
+            for sha, path in small:
+                header = process.stdout.readline().decode("utf-8", "replace").strip()
+                parts = header.split()
+                if len(parts) != 3:
+                    break
+                size = int(parts[2])
+                raw = process.stdout.read(size)
+                process.stdout.read(1)  # trailing newline
+                if parts[1] != "blob":
+                    continue
+                content = raw.decode("utf-8", "replace")
+                findings.extend(scan_generic(content, f"{path}@{sha[:8]}"))
+            process.stdout.close()
+            process.wait()
     finally:
-        process.stdout.close()
-        process.wait()
+        os.unlink(ids_file)
     return findings, commits
 
 

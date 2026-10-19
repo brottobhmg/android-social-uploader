@@ -183,6 +183,33 @@ def test_to_ere_removes_the_python_only_syntax():
     assert re.search(converted, (_s("AKIA", "IOSFODNN7EXAMPLE")))
 
 
+@pytest.mark.skipif(
+    subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
+    reason="git is not available",
+)
+def test_history_scan_completes_on_a_repository_with_many_objects(tmp_path):
+    """The scan must finish on a repository with more objects than a pipe holds.
+
+    The object ids are handed to git through a file: writing them all into
+    the pipe before reading anything back blocks both processes as soon as
+    the pipe buffer is full, which is what happens on the CI runner.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", ".")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "test")
+
+    for index in range(2000):
+        (repo / f"file{index}.txt").write_text("x\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "many files")
+
+    findings, commits = scan_history(repo)
+    assert commits == 1
+    assert findings == []
+
+
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
