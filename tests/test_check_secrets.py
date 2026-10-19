@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.check_secrets import (  # noqa: E402
     is_allowed,
     is_placeholder,
+    is_reference,
     redact,
     scan_history,
     scan_text,
@@ -104,6 +105,23 @@ def test_ignores_placeholders(value):
 
 def test_ignores_low_entropy_values():
     assert scan_text('password = "aaaaaaaaaaaaaaaa"', "f.py") == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "${NIM_API_KEY}",
+        "$NIM_API_KEY",
+        "$({NIM_API_KEY})",
+        "{{ api_key }}",
+        "<% api_key %>",
+        "%API_KEY%",
+    ],
+)
+def test_ignores_variable_references(value):
+    """An interpolation points at a secret stored elsewhere: it is not one."""
+    assert scan_text(f'API_KEY="{value}"', "f.sh") == []
+    assert is_reference(value)
 
 
 def test_ignores_ordinary_code():

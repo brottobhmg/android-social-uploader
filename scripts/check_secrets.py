@@ -75,6 +75,7 @@ PLACEHOLDER_MARKERS = (
     "redacted",
     "notreal",
     "not_real",
+    "_removed",
     "test_key",
     "testkey",
     "test-token",
@@ -144,6 +145,26 @@ def is_placeholder(value: str) -> bool:
     return any(marker in lowered for marker in PLACEHOLDER_MARKERS)
 
 
+def is_reference(value: str) -> bool:
+    """Return True when *value* refers to a variable instead of being a literal.
+
+    A shell or template interpolation such as `${NIM_API_KEY}`, `$NIM_API_KEY`
+    or `{{ api_key }}` is a pointer to a secret stored elsewhere, not a
+    credential in the file.
+    """
+    if value.startswith("${") or value.startswith("$("):
+        return True
+    if value.startswith("{{") and value.endswith("}}"):
+        return True
+    if value.startswith("<%") and value.endswith("%>"):
+        return True
+    if value.startswith("%") and value.endswith("%") and len(value) > 2:
+        return True
+    if value.startswith("$") and len(value) > 1 and value[1:].isidentifier():
+        return True
+    return False
+
+
 def is_allowed(text: str) -> bool:
     """Return True when *text* opts out of the scan via the allow marker."""
     header = "\n".join(text.splitlines()[:ALLOW_MARKER_LINES])
@@ -181,7 +202,7 @@ def scan_generic(text: str, label: str, line_offset: int = 0) -> list[str]:
     found: list[tuple[int, str]] = []
     for match in GENERIC_RULE.finditer(text):
         value = match.group(2)
-        if is_placeholder(value):
+        if is_placeholder(value) or is_reference(value):
             continue
         if shannon_entropy(value) < MIN_ENTROPY:
             continue
