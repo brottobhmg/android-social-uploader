@@ -58,6 +58,30 @@ Use clear, conventional commit messages:
 - Keep all secrets in `.env` (gitignored).
 - Do not hardcode private endpoints or infrastructure URLs.
 
+### Secret scanner
+
+The repository ships a dependency-free scanner that refuses commits containing
+what looks like a credential. Enable the pre-commit hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook then scans the staged files on every commit. You can also run it by
+hand at any time:
+
+```bash
+python scripts/check_secrets.py           # staged files
+python scripts/check_secrets.py --all     # every tracked file
+python scripts/check_secrets.py --history # every blob in every commit
+```
+
+A finding aborts the commit and prints the file, the line and the kind of
+secret. Matched values are redacted, so a finding never leaks the credential
+into a terminal scrollback or a CI log. If a finding is a false positive, make
+the value look like a placeholder (for example `your_key_here`) or extend the
+rules in `scripts/check_secrets.py`.
+
 ## Pull requests
 
 - Keep pull requests focused on a single concern.

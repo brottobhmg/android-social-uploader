@@ -1,0 +1,25 @@
+#!/bin/sh
+# Pre-commit hook: refuse commits that would introduce a secret.
+#
+# Enable it once per clone with:
+#
+#     git config core.hooksPath .githooks
+#
+# The hook fails open (allows the commit) when Python is not available, so it
+# never blocks work on a machine without a Python interpreter.
+
+root=$(git rev-parse --show-toplevel)
+scanner="$root/scripts/check_secrets.py"
+
+if [ ! -f "$scanner" ]; then
+    exit 0
+fi
+
+if command -v python >/dev/null 2>&1; then
+    python "$scanner"
+elif command -v python3 >/dev/null 2>&1; then
+    python3 "$scanner"
+else
+    echo "pre-commit: python not found, skipping the secret scan" >&2
+    exit 0
+fi
