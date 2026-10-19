@@ -91,13 +91,13 @@ class YouTubeUploader(BaseUploader):
         self._answer_ai_disclosure()
 
         # The tags live behind the "Aggiungi tag" entry of the attributes
-        # screen. Clicking the inline chip area instead types the tags into
-        # the title field, which then gets published with the tags stuck to
-        # it.
+        # screen, in the middle of the chip list. Clicking the inline chip
+        # area instead types the tags into the title field, which then gets
+        # published with the tags stuck to it.
         tags = self._valid_tags(metadata.get("tag", ""))
         config.logger.info("Typing %d tags: %s", len(tags), ", ".join(tags))
         if not uia.agent_click(
-            54.5, 25.3, "the 'Aggiungi tag' entry that opens the tag editor"
+            50.0, 57.9, "the 'Aggiungi tag' entry that opens the tag editor"
         ):
             config.logger.error("YouTube: could not open the tag editor")
             return False
@@ -127,10 +127,14 @@ class YouTubeUploader(BaseUploader):
                 ", ".join(missing),
             )
 
-        # Simulate back key
-        config.logger.info("Simulating Back button...")
-        uia.adb(["shell", "input", "keyevent", "4"])
-        step_recorder.record_back("Confirm and return to the main publication screen")
+        # Back to the main publication screen. The hardware BACK opens the
+        # "discard the changes?" dialog when the form holds unsaved edits,
+        # so the on-screen arrow is used instead.
+        config.logger.info("Going back to the main publication screen...")
+        uia.agent_click(
+            6.6, 7.6, "the 'Indietro' (back) arrow in the top left of the attributes screen"
+        )
+        step_recorder.record_back("Return to the main publication screen")
         time.sleep(2)
 
         # The title must be exactly what the metadata says: a mistargeted
@@ -193,17 +197,28 @@ class YouTubeUploader(BaseUploader):
         time.sleep(1)
         if ok:
             step_recorder.record_type("AI usage disclosure", answer)
-        # Go back to the attributes screen.
-        uia.adb(["shell", "input", "keyevent", "4"])
+        # Back to the attributes screen: the hardware BACK would leave the
+        # attributes screen altogether and land on the main form.
+        uia.agent_click(
+            6.6, 7.6, "the 'Back' arrow in the top left of the AI usage screen"
+        )
         time.sleep(2)
         return ok
 
     def _tags_missing(self, tags: list) -> list:
-        """Return the tags that did not become a chip on the screen."""
+        """Return the tags that did not become a chip on the screen.
+
+        The chips are exposed as ``content-desc="<tag>, Tocca per selezionare
+        il tag."``, without a leading hash.
+        """
         tree = uia.dump_ui_tree()
         if not tree:
             return []
-        present = {chip.lower() for chip in re.findall(r"#(\w+)", tree)}
+        present = set()
+        for match in re.finditer(r'content-desc="([^"]*?)Tocca per selezionare', tree):
+            # The chip is exposed as "<tag>, Tocca per selezionare il tag.":
+            # the comma belongs to the label, not to the tag.
+            present.add(match.group(1).split(",")[0].strip().lstrip("#").lower())
         return [tag for tag in tags if tag.lower() not in present]
 
     def _title_is_intact(self, expected: str) -> bool:
@@ -212,11 +227,30 @@ class YouTubeUploader(BaseUploader):
         The tag editor sits close to the title field: a mistargeted click
         types the tags into the title, and the Short is then published with
         the tags stuck to its title.
+
+        A field that is not on screen says nothing about its content, so the
+        check only fails when a title field is visible and holds something
+        else.
         """
         tree = uia.dump_ui_tree()
         if not tree:
             return True
-        return expected in tree
+        # A visible text holding exactly the expected title: the title is
+        # fine. The comparison is exact because a corrupted title still
+        # contains the expected one as a prefix.
+        for match in re.finditer(r'text="([^"]*)"', tree):
+            if match.group(1) == expected:
+                return True
+        # A dialog covers the form: the title cannot be checked, and
+        # refusing here would block a perfectly good upload.
+        if "Vuoi ignorare le modifiche" in tree:
+            return True
+        # A visible title field holding something else is a corrupted title.
+        for match in re.finditer(r'text="([^"]*)"', tree):
+            value = match.group(1)
+            if expected[:20] in value:
+                return False
+        return True
 
     def _publication_left_the_form(self) -> bool:
         """Return True when the details screen is no longer on display."""
