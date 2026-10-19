@@ -68,7 +68,8 @@ auto-test-android/
 ├── requirements.txt     # Python dependencies
 ├── pytest.ini           # Pytest configuration
 ├── tests/               # Unit tests
-└── docs/                # Generated guides
+├── scripts/             # Repository tooling (secret scanner)
+└── docs/                # Architecture, security guide, generated guides
 ```
 
 ## 📋 Prerequisites
@@ -179,6 +180,8 @@ MAX_AGENT_ATTEMPTS=10
 
 > **Security note:** API keys are never hardcoded. They are read from environment
 > variables via `config.py`. The `.env` file is gitignored and never committed.
+> A dependency-free secret scanner and a pre-commit hook block accidental
+> credential commits — see [docs/SECURITY.md](docs/SECURITY.md).
 
 ## 🎮 Usage
 
