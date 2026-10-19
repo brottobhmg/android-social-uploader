@@ -10,9 +10,12 @@ ENV/
 .venv/
 
 # Environment variables
+# Ignore every .env variant (.env, .env.production, .env.dev, ...) and direnv
+# files. Only the documented template stays tracked.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+.envrc
 
 # Debug artifacts
 debug_agent_clicks/
